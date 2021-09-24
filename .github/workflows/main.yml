@@ -1,15 +1,18 @@
-name: Test
+name: Main
 
 on:
-  pull_request:
+  push:
     branches:
-      - '*'
+      - master
+  pull_request:
 
 env:
   GO_VERSION: 1.17
+  GOLANGCI_LINT_VERSION: v1.42.1
 
 jobs:
-  tests:
+  main:
+    name: Main Process
     runs-on: ubuntu-latest
 
     steps:
@@ -45,7 +48,7 @@ jobs:
       - name: Install golangci-lint ${{ env.GOLANGCI_LINT_VERSION }}
         run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin ${GOLANGCI_LINT_VERSION}
 
-      - name: test
+      - name: Launch test
         run: go test ./
 
       - name: golangci-lint

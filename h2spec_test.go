@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"fmt"
 	"log"
 	"math/big"
 	"net"
@@ -18,11 +17,12 @@ import (
 	"github.com/summerwind/h2spec/config"
 	"github.com/summerwind/h2spec/generic"
 	"github.com/summerwind/h2spec/http2"
-	"github.com/summerwind/h2spec/spec"
 	"github.com/valyala/fasthttp"
 )
 
 func launchLocalServer(t *testing.T) int {
+	t.Helper()
+
 	certPEM, keyPEM, err := KeyPair("test.default", time.Time{})
 	if err != nil {
 		log.Fatalf("Unable to generate certificate: %v", err)
@@ -30,12 +30,13 @@ func launchLocalServer(t *testing.T) int {
 
 	server := &fasthttp.Server{
 		Handler: func(ctx *fasthttp.RequestCtx) {
-			ctx.Response.AppendBodyString(fmt.Sprintf("Test	 HTTP2"))
+			ctx.Response.AppendBodyString("Test	 HTTP2")
 		},
 	}
 	ConfigureServer(server)
 
-	ln, err := net.Listen("tcp4", ":0")
+	ln, err := net.Listen("tcp4", "127.9.9.1:0")
+	require.NoError(t, err)
 	go func() {
 		log.Println(server.ServeTLSEmbed(ln, certPEM, keyPEM))
 	}()
@@ -66,16 +67,14 @@ func TestGeneric(t *testing.T) {
 	require.Equal(t, 0, tg.FailedCount)
 }
 
-func printTest(tg *spec.TestGroup) {
-	for _, group := range tg.Groups {
-		printTest(group)
-	}
-	for i := range tg.Tests {
-		fmt.Printf("\"%s/%d\",\n", tg.ID(), i+1)
-	}
-}
-
-
+// func printTest(tg *spec.TestGroup) {
+// 	for _, group := range tg.Groups {
+// 		printTest(group)
+// 	}
+// 	for i := range tg.Tests {
+// 		fmt.Printf("\"%s/%d\",\n", tg.ID(), i+1)
+// 	}
+// }
 
 func TestHTTP2(t *testing.T) {
 	port := launchLocalServer(t)
@@ -209,7 +208,7 @@ const DefaultDomain = "TEST DEFAULT CERT"
 
 // KeyPair generates cert and key files.
 func KeyPair(domain string, expiration time.Time) ([]byte, []byte, error) {
-	rsaPrivKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	rsaPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
 	}
