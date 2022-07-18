@@ -25,9 +25,14 @@ const (
 	connStateClosed
 )
 
+type FrameWriter interface {
+	WriteFrH(fr *FrameHeader)
+}
+
 type serverConn struct {
-	c net.Conn
-	h fasthttp.RequestHandler
+	HandleFrameFn func(fw FrameWriter, strm *Stream, fr *FrameHeader) error
+	c             net.Conn
+	h             fasthttp.RequestHandler
 
 	br *bufio.Reader
 	bw *bufio.Writer
@@ -76,6 +81,19 @@ type serverConn struct {
 
 	debug  bool
 	logger fasthttp.Logger
+}
+
+func (sc *serverConn) WriteFrH(fr *FrameHeader) {
+	ok := true
+	select {
+	case _, ok = <-sc.writer:
+	default:
+	}
+	if ok {
+		sc.writer <- fr
+	} else {
+		fmt.Println("IGNORE ", fr)
+	}
 }
 
 func (sc *serverConn) closeIdleConn() {
@@ -365,6 +383,12 @@ loop:
 				// if the stream doesn't exist, create it
 
 				if fr.Type() == FrameResetStream {
+					if sc.HandleFrameFn != nil {
+						err := sc.HandleFrameFn(sc, strm, fr)
+						if err != nil {
+							sc.writeGoAway(fr.Stream(), ProtocolError, "RST_STREAM on idle stream")
+						}
+					}
 					// only send go away on idle stream not on an already-closed stream
 					if _, ok := closedStrms[fr.Stream()]; !ok {
 						sc.writeGoAway(fr.Stream(), ProtocolError, "RST_STREAM on idle stream")
@@ -481,7 +505,7 @@ loop:
 
 			switch strm.State() {
 			case StreamStateHalfClosed:
-				sc.handleEndRequest(strm)
+				sc.handleEndRequest(fr, strm)
 				// we fallthrough because once we send the response
 				// the stream is already consumed and thus finished
 				fallthrough
@@ -643,9 +667,16 @@ func (sc *serverConn) handleFrame(strm *Stream, fr *FrameHeader) error {
 			return NewGoAwayError(ProtocolError, "received headers on a finished stream")
 		}
 
-		err = sc.handleHeaderFrame(strm, fr)
-		if err != nil {
-			return err
+		if sc.HandleFrameFn != nil {
+			err = sc.HandleFrameFn(sc, strm, fr)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = sc.handleHeaderFrame(strm, fr)
+			if err != nil {
+				return err
+			}
 		}
 
 		if fr.Flags().Has(FlagEndHeaders) {
@@ -666,12 +697,24 @@ func (sc *serverConn) handleFrame(strm *Stream, fr *FrameHeader) error {
 		if strm.State() >= StreamStateHalfClosed {
 			return NewGoAwayError(StreamClosedError, "stream closed")
 		}
-
-		strm.ctx.Request.AppendBody(
-			fr.Body().(*Data).Data())
+		if sc.HandleFrameFn != nil {
+			err = sc.HandleFrameFn(sc, strm, fr)
+			if err != nil {
+				return err
+			}
+		} else {
+			strm.ctx.Request.AppendBody(
+				fr.Body().(*Data).Data())
+		}
 	case FrameResetStream:
 		if strm.State() == StreamStateIdle {
 			return NewGoAwayError(ProtocolError, "RST_STREAM on idle stream")
+		}
+		if sc.HandleFrameFn != nil {
+			err = sc.HandleFrameFn(sc, strm, fr)
+			if err != nil {
+				return err
+			}
 		}
 	case FramePriority:
 		if strm.State() != StreamStateIdle && !strm.headersFinished {
@@ -795,7 +838,10 @@ func (sc *serverConn) verifyState(strm *Stream, fr *FrameHeader) error {
 }
 
 // handleEndRequest dispatches the finished request to the handler.
-func (sc *serverConn) handleEndRequest(strm *Stream) {
+func (sc *serverConn) handleEndRequest(frH *FrameHeader, strm *Stream) {
+	if sc.HandleFrameFn != nil {
+		return
+	}
 	ctx := strm.ctx
 	ctx.Request.Header.SetProtocolBytes(StringHTTP2)
 

@@ -134,7 +134,6 @@ func (f *FrameHeader) parseHeader(header []byte) {
 
 func ReadFrameFrom(br *bufio.Reader) (*FrameHeader, error) {
 	fr := AcquireFrameHeader()
-
 	_, err := fr.ReadFrom(br)
 	if err != nil {
 		if fr.Body() != nil {
@@ -145,7 +144,6 @@ func ReadFrameFrom(br *bufio.Reader) (*FrameHeader, error) {
 
 		fr = nil
 	}
-
 	return fr, err
 }
 
@@ -182,7 +180,6 @@ func (f *FrameHeader) readFrom(br *bufio.Reader) (int64, error) {
 	if err != nil {
 		return -1, err
 	}
-
 	_, _ = br.Discard(DefaultFrameSize)
 
 	rn := int64(DefaultFrameSize)
@@ -192,7 +189,6 @@ func (f *FrameHeader) readFrom(br *bufio.Reader) (int64, error) {
 	if err = f.checkLen(); err != nil {
 		return 0, err
 	}
-
 	if f.kind > FrameContinuation {
 		_, _ = br.Discard(f.length)
 		return 0, ErrUnknownFrameType

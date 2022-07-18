@@ -38,7 +38,8 @@ func (sc *ServerConfig) defaults() {
 type Server struct {
 	s *fasthttp.Server
 
-	cnf ServerConfig
+	cnf           ServerConfig
+	HandleFrameFn func(fw FrameWriter, strm *Stream, fr *FrameHeader) error
 }
 
 // ServeConn starts serving a net.Conn as HTTP/2.
@@ -64,6 +65,7 @@ func (s *Server) ServeConn(c net.Conn) error {
 		pingInterval:   s.cnf.PingInterval,
 		logger:         s.s.Logger,
 		debug:          s.cnf.Debug,
+		HandleFrameFn:  s.HandleFrameFn,
 	}
 
 	if sc.logger == nil {

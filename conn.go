@@ -74,7 +74,8 @@ func Handshake(preface bool, bw *bufio.Writer, st *Settings, maxWin int32) error
 
 // Conn represents a raw HTTP/2 connection over TLS + TCP.
 type Conn struct {
-	c net.Conn
+	ReadFn func(fr *FrameHeader)
+	c      net.Conn
 
 	br *bufio.Reader
 	bw *bufio.Writer
@@ -493,40 +494,56 @@ func (c *Conn) readLoop() {
 	defer func() { _ = c.Close() }()
 
 	for {
+
 		fr, err := c.readNext()
 		if err != nil {
 			c.lastErr = err
 			break
 		}
-
 		// TODO: panic otherwise?
-		if ri, ok := c.reqQueued.Load(fr.Stream()); ok {
-			r := ri.(*Ctx)
+		if c.ReadFn != nil {
+			c.ReadFn(fr)
+		} else {
+			if ri, ok := c.reqQueued.Load(fr.Stream()); ok {
+				r := ri.(*Ctx)
 
-			err := c.readStream(fr, r.Response)
-			if err == nil {
-				if fr.Flags().Has(FlagEndStream) {
-					c.finish(r, fr.Stream(), nil)
+				err := c.readStream(fr, r.Response)
+				if err == nil {
+					if fr.Flags().Has(FlagEndStream) {
+						c.finish(r, fr.Stream(), nil)
+					}
+				} else {
+					c.finish(r, fr.Stream(), err)
+
+					fmt.Fprintf(os.Stderr, "%s. payload=%v\n", err, fr.payload)
+
+					if errors.Is(err, FlowControlError) {
+						break
+					}
 				}
-			} else {
-				c.finish(r, fr.Stream(), err)
 
-				fmt.Fprintf(os.Stderr, "%s. payload=%v\n", err, fr.payload)
-
-				if errors.Is(err, FlowControlError) {
-					break
-				}
-			}
-
-			if c.state == connStateClosed {
-				if fr.Stream() == c.closeRef {
-					break
+				if c.state == connStateClosed {
+					if fr.Stream() == c.closeRef {
+						break
+					}
 				}
 			}
 		}
 
 		ReleaseFrameHeader(fr)
 	}
+}
+
+func (c *Conn) WriteFrameHeader(id uint32, fr *FrameHeader) (uint32, int64, error) {
+	if id == 0 {
+		id = c.nextID
+		c.nextID += 2
+	}
+
+	fr.SetStream(id)
+	n, err := fr.WriteTo(c.bw)
+	c.bw.Flush()
+	return id, n, err
 }
 
 func (c *Conn) writeRequest(ctx *Ctx) error {
@@ -635,6 +652,7 @@ func writeData(bw *bufio.Writer, fh *FrameHeader, body []byte) (err error) {
 func (c *Conn) readNext() (fr *FrameHeader, err error) {
 loop:
 	for err == nil {
+
 		fr, err = ReadFrameFrom(c.br)
 		if err != nil {
 			break
@@ -643,7 +661,6 @@ loop:
 		if fr.Stream() != 0 {
 			break
 		}
-
 		switch fr.Type() {
 		case FrameSettings:
 			st := fr.Body().(*Settings)
@@ -674,7 +691,6 @@ loop:
 
 			break loop
 		}
-
 		ReleaseFrameHeader(fr)
 	}
 
